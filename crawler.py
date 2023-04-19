@@ -17,6 +17,7 @@ import MySQLdb
 from sqlalchemy import create_engine, types
 
 BASE_DIRECTORY = './hackernews'
+SNAPSHOT_DIRECTORY = './snapshots'
 SEP = '\t'
 
 def call_hackernews_api(endpoint):
@@ -139,9 +140,9 @@ def write_csv_to_table(csv_name, table_name):
       .to_sql(table_name, con=engine, index=False, if_exists='replace')
 
 if __name__ == '__main__':
-    Path(f'./snapshots').mkdir(parents=True, exist_ok=True)
+    Path(f'{SNAPSHOT_DIRECTORY}').mkdir(parents=True, exist_ok=True)
     today = datetime.datetime.utcnow().date().strftime("%Y-%m-%d")
-    snapshot_file = f'./snapshots/hackernews-{today}.csv'
+    snapshot_file = f'{SNAPSHOT_DIRECTORY}/hackernews-{today}.csv'
     
     crawl()
     merge_csvs(snapshot_file)
