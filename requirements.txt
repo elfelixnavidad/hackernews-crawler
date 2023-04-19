@@ -1,18 +1,4 @@
-Bottleneck @ file:///work/ci_py311/bottleneck_1676827011612/work
-click @ file:///work/ci_py311/click_1676825163161/work
-greenlet==2.0.2
-mkl-fft==1.3.1
-mkl-random @ file:///work/ci_py311/mkl_random_1676828032909/work
-mkl-service==2.4.0
-mysql-connector==2.2.9
-mysqlclient @ file:///work/ci_py311/mysqlclient_1676859848044/work
-numexpr @ file:///work/ci_py311_2/numexpr_1679336657660/work
-numpy @ file:///work/ci_py311/numpy_and_numpy_base_1676823870601/work
-packaging @ file:///croot/packaging_1678965309396/work
+MySQL-python==1.2.5
+numpy==1.23.5
 pandas==1.5.3
-python-dateutil @ file:///tmp/build/80754af9/python-dateutil_1626374649649/work
-python-dotenv @ file:///work/ci_py311/python-dotenv_1676842320650/work
-pytz @ file:///work/ci_py311/pytz_1676825004346/work
-six @ file:///tmp/build/80754af9/six_1644875935023/work
 SQLAlchemy==2.0.9
-typing_extensions==4.5.0
