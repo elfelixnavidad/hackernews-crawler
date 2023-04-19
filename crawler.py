@@ -66,7 +66,7 @@ def traverse_comment(id_dict, parent_):
     data = create_row(id_dict, parent_)
     
     if 'kids' not in id_dict.keys():
-        return data
+        return data + '\n'
     else:
         for k in id_dict['kids']:
             data += '\n' + traverse_comment(call_hackernews_api(f'item/{k}.json'), id_dict['id'])
