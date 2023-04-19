@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 import json
 import time
+import re
+import os
+import datetime
+import html
 
 from pathlib import Path
 from urllib.request import urlopen
@@ -9,7 +13,11 @@ from urllib.error import HTTPError, URLError
 import pandas as pd
 import numpy as np
 
+import MySQLdb
+from sqlalchemy import create_engine, types
+
 BASE_DIRECTORY = './hackernews'
+SEP = '\t'
 
 def call_hackernews_api(endpoint):
     url = f'https://hacker-news.firebaseio.com/v0/{endpoint}'
@@ -32,35 +40,46 @@ def call_hackernews_api(endpoint):
 
 def create_row(id_dict, parent_id):
     post_timestamp = ''
+    post_id = ''
+    post_type = ''
+    post_by = ''
+    post_text = ''
+
+    if ('deleted' in id_dict.keys() and id_dict['deleted']) or ('dead' in id_dict.keys() and id_dict['dead']):
+        return f'{post_timestamp}{SEP}{post_id}{SEP}{parent_id}{SEP}{post_type}{SEP}{post_by}{SEP}{post_text}'
+        
     if 'time' in id_dict.keys():
         post_timestamp = id_dict['time']
-
-    post_id = ''
+    
     if 'id' in id_dict.keys():
         post_id = id_dict['id']
 
-    post_type = ''
+    
     if 'type' in id_dict.keys():
         post_type = id_dict['type']
 
-    post_by = ''
+    
     if 'by' in id_dict.keys():
         post_by = id_dict['by']
 
-    post_text = ''
+    
     if post_type == 'comment':
         if 'text' in id_dict.keys():
-            post_text = id_dict['text']
+            post_text = re.sub(r'[^a-zA-Z0-9 .!?,]', '', id_dict['text'])
     elif post_type == 'story':
         if 'title' in id_dict.keys():
-            post_text += id_dict['title']
+            post_text += re.sub(r'[^a-zA-Z0-9 .!?,]', '', id_dict['title'])
         if 'url' in id_dict.keys():
             post_text += '|' + id_dict['url']
         if 'score' in id_dict.keys():
             post_text += '|' + str(id_dict['score'])
-    post_text = "\"" + post_text + "\""
             
-    return f'{post_timestamp}\t{post_id}\t{parent_id}\t{post_type}\t{post_by}\t{post_text}'
+    
+    # post_text = re.sub(r'[^a-zA-Z0-9 .!?,]', '', post_text)
+    # post_text = html.unescape(post_text)
+    # post_text = "\"" + post_text + "\""
+    
+    return f'{post_timestamp}{SEP}{post_id}{SEP}{parent_id}{SEP}{post_type}{SEP}{post_by}{SEP}{post_text}'
 
 def traverse_comment(id_dict, parent_):
     data = create_row(id_dict, parent_)
@@ -78,16 +97,52 @@ def save_story(story_id):
     write_ts = int(time.time())
     
     Path(f'{BASE_DIRECTORY}/{story_id}').mkdir(parents=True, exist_ok=True)
-    with open(f'{BASE_DIRECTORY}/{story_id}/{story_id}_{write_ts}.tsv', 'w') as f:
+    with open(f'{BASE_DIRECTORY}/{story_id}/{story_id}_{write_ts}.csv', 'w') as f:
         f.write(story_data)    
     
-def main():
-    new_stories_list = call_hackernews_api('newstories.json')
-
+def crawl():
     Path(f'{BASE_DIRECTORY}').mkdir(parents=True, exist_ok=True)
+    
+    new_stories_list = call_hackernews_api('newstories.json')
+    
     for s in new_stories_list:
         print(f'Saving {s}')
         save_story(s)
+
+def merge_csvs(csv_name):
+    df_list = []
+    columns = ['timestamp', 'id', 'parent_id', 'type', 'by', 'text']
     
+    for f1 in os.listdir(BASE_DIRECTORY):
+        for f2 in os.listdir(f'{BASE_DIRECTORY}/{f1}'):
+            df = pd.read_csv(f'{BASE_DIRECTORY}/{f1}/{f2}', names=columns, sep=SEP)
+            df['story_id'] = df.query('type == \'story\'')['id'].iloc[0]
+            
+            df_list.append(df)
+
+    merged_df = pd.concat(df_list)\
+                  .drop_duplicates()\
+                  .dropna(subset=['id'])
+    merged_df = merged_df[['timestamp', 'story_id', 'id', 'parent_id', 'type', 'by', 'text']]
+    merged_df.to_csv(csv_name, sep=SEP, index=False)
+
+def write_csv_to_table(csv_name, table_name):
+    host = os.environ['PLANETSCALE_HOST']
+    username = os.environ['PLANETSCALE_USERNAME']
+    password = os.environ['PLANETSCALE_PASSWORD']
+    db = os.environ['PLANETSCALE_DATABASE']
+
+    connection_string = f'mysql+mysqldb://{username}:{password}@{host}/{db}'
+    engine = create_engine(connection_string, echo=True)
+
+    pd.read_csv(csv_name, sep=SEP)\
+      .to_sql(table_name, con=engine, index=False, if_exists='replace')
+
 if __name__ == '__main__':
-    main()
+    Path(f'./snapshots').mkdir(parents=True, exist_ok=True)
+    today = datetime.datetime.utcnow().date().strftime("%Y-%m-%d")
+    snapshot_file = f'./snapshots/hackernews-{today}.csv'
+    
+    crawl()
+    merge_csvs(snapshot_file)
+    write_csv_to_table(snapshot_file, 'stories')
