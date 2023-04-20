@@ -44,7 +44,7 @@ def create_row(id_dict, parent_id):
     post_id = ''
     post_type = ''
     post_by = ''
-    post_text = ''
+    post_text = ''    
 
     if ('deleted' in id_dict.keys() and id_dict['deleted']) or ('dead' in id_dict.keys() and id_dict['dead']):
         return f'{post_timestamp}{SEP}{post_id}{SEP}{parent_id}{SEP}{post_type}{SEP}{post_by}{SEP}{post_text}'
@@ -54,31 +54,28 @@ def create_row(id_dict, parent_id):
     
     if 'id' in id_dict.keys():
         post_id = id_dict['id']
-
     
     if 'type' in id_dict.keys():
         post_type = id_dict['type']
-
     
     if 'by' in id_dict.keys():
         post_by = id_dict['by']
 
-    
+    # post_text = re.sub(r'[^a-zA-Z0-9 .!?,]', '', post_text)
+    # post_text = html.unescape(post_text)
+    # post_text = "\"" + post_text + "\""
     if post_type == 'comment':
         if 'text' in id_dict.keys():
-            post_text = re.sub(r'[^a-zA-Z0-9 .!?,]', '', id_dict['text'])
+            # re.sub(r'[^a-zA-Z0-9 .!?,]', '', id_dict['text'])
+            post_text = html.unescape(id_dict['text']) 
     elif post_type == 'story':
         if 'title' in id_dict.keys():
-            post_text += re.sub(r'[^a-zA-Z0-9 .!?,]', '', id_dict['title'])
+            # re.sub(r'[^a-zA-Z0-9 .!?,]', '', )
+            post_text += id_dict['title']
         if 'url' in id_dict.keys():
             post_text += '|' + id_dict['url']
         if 'score' in id_dict.keys():
             post_text += '|' + str(id_dict['score'])
-            
-    
-    # post_text = re.sub(r'[^a-zA-Z0-9 .!?,]', '', post_text)
-    # post_text = html.unescape(post_text)
-    # post_text = "\"" + post_text + "\""
     
     return f'{post_timestamp}{SEP}{post_id}{SEP}{parent_id}{SEP}{post_type}{SEP}{post_by}{SEP}{post_text}'
 
@@ -110,7 +107,12 @@ def crawl():
         print(f'Saving {s}')
         save_story(s)
 
-def merge_csvs(csv_name):
+def create_crawl_snapshot():
+    Path(f'{SNAPSHOT_DIRECTORY}').mkdir(parents=True, exist_ok=True)
+
+    write_ts = int(time.time())
+    snapshot_file = f'{SNAPSHOT_DIRECTORY}/hackernews_{write_ts}.csv'
+
     df_list = []
     columns = ['timestamp', 'id', 'parent_id', 'type', 'by', 'text']
     
@@ -125,7 +127,7 @@ def merge_csvs(csv_name):
                   .drop_duplicates()\
                   .dropna(subset=['id'])
     merged_df = merged_df[['timestamp', 'story_id', 'id', 'parent_id', 'type', 'by', 'text']]
-    merged_df.to_csv(csv_name, sep=SEP, index=False)
+    merged_df.to_csv(snapshot_file, sep=SEP, index=False)
 
 def write_csv_to_table(csv_name, table_name):
     host = os.environ['PLANETSCALE_HOST']
@@ -139,11 +141,6 @@ def write_csv_to_table(csv_name, table_name):
     pd.read_csv(csv_name, sep=SEP)\
       .to_sql(table_name, con=engine, index=False, if_exists='replace')
 
-if __name__ == '__main__':
-    Path(f'{SNAPSHOT_DIRECTORY}').mkdir(parents=True, exist_ok=True)
-    today = datetime.datetime.utcnow().date().strftime("%Y-%m-%d")
-    snapshot_file = f'{SNAPSHOT_DIRECTORY}/hackernews-{today}.csv'
-    
+if __name__ == '__main__':        
     crawl()
-    merge_csvs(snapshot_file)
-    write_csv_to_table(snapshot_file, 'stories')
+    create_crawl_snapshot()    
