@@ -2,6 +2,11 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from mpl_toolkits.mplot3d import axes3d
 
+"""
+Taken from this helpful tutorial: https://zulko.wordpress.com/2012/09/29/animate-your-3d-plots-with-pythons-matplotlib/
+S/o Valentin
+"""
+
 ##### TO CREATE A SERIES OF PICTURES 
 def make_views(ax,angles,elevation=None, width=4, height = 3,
                 prefix='tmprot_',**kwargs):
