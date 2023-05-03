@@ -199,7 +199,7 @@ def create_crawl_snapshot(save_to_s3=False):
     merged_df.to_pickle(encoded_comments_filepath)
 
     if save_to_s3:
-        save_file_to_s3(raw_comments_filepath, f'snapshots/{raw_comments_key}', verbose=True)
+        # save_file_to_s3(raw_comments_filepath, f'snapshots/{raw_comments_key}', verbose=True)
         save_file_to_s3(encoded_comments_filepath, f'embeddings/{encoded_comments_key}', verbose=True)
     
 def crawl_to_s3():
