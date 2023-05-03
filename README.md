@@ -14,3 +14,5 @@ First Run:
 5. source hn_crawler/bin/activate
 6. pip install -r requirements.txt
 
+.env:
+List of env variables you need defined in order to run the project.
