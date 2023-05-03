@@ -12,15 +12,20 @@ from urllib.error import HTTPError, URLError
 
 import pandas as pd
 import numpy as np
+import boto3
+from botocore.exceptions import ClientError
 
 import MySQLdb
 from sqlalchemy import create_engine, types
 
-BASE_DIRECTORY = './hackernews'
-SNAPSHOT_DIRECTORY = './snapshots'
+BASE_DIRECTORY = f'{os.getcwd()}/hackernews'
+SNAPSHOT_DIRECTORY = f'{os.getcwd()}/snapshots'
 SEP = '\t'
 
 def call_hackernews_api(endpoint):
+    """
+    Call the HackerNews web API via the v0 endpoint.
+    """
     url = f'https://hacker-news.firebaseio.com/v0/{endpoint}'
     data = None
     
@@ -40,6 +45,15 @@ def call_hackernews_api(endpoint):
     return data
 
 def create_row(id_dict, parent_id):
+    """
+    Sample schema
+
+    | post_timestamp |  post_id | parent_id | post_type | post_by     | post_text                                                                                                                                                                                             |
+    |----------------+----------+-----------+-----------+-------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+    |     1681917047 | 35629127 |           | story     | davidbarker | StableLM: A new open-source language model{SEP}https://stability.ai/blog/stability-ai-launches-the-first-of-its-stablelm-suite-of-language-models{SEP}1074                                            |
+    |     1681924196 | 35630664 |  35629127 | comment   | dang        | <a href="https://github.com/Stability-AI/StableLM">https://github.com/Stability-AI/StableLM</a>                                                                                                       |
+    |     1681941664 | 35633859 |  35633163 | comment   | jvm         | Doesn't make much sense to compare a model that's not fine tuned to flan models that are fine tuned. Makes more sense to compare to something like T5 base where it's probably a lot more comparable. |
+    """
     post_timestamp = ''
     post_id = ''
     post_type = ''
@@ -61,9 +75,6 @@ def create_row(id_dict, parent_id):
     if 'by' in id_dict.keys():
         post_by = id_dict['by']
 
-    # post_text = re.sub(r'[^a-zA-Z0-9 .!?,]', '', post_text)
-    # post_text = html.unescape(post_text)
-    # post_text = "\"" + post_text + "\""
     if post_type == 'comment':
         if 'text' in id_dict.keys():
             # re.sub(r'[^a-zA-Z0-9 .!?,]', '', id_dict['text'])
@@ -80,6 +91,9 @@ def create_row(id_dict, parent_id):
     return f'{post_timestamp}{SEP}{post_id}{SEP}{parent_id}{SEP}{post_type}{SEP}{post_by}{SEP}{post_text}'
 
 def traverse_comment(id_dict, parent_):
+    """
+    Recurse thru comment thread.
+    """
     data = create_row(id_dict, parent_)
     
     if 'kids' not in id_dict.keys():
@@ -91,14 +105,19 @@ def traverse_comment(id_dict, parent_):
     return data
 
 def save_story(story_id):
+    """
+    Save HackerNews story and all associated comments.
+    """
     story_data = traverse_comment(id_dict=call_hackernews_api(f'item/{story_id}.json'), parent_='')
     write_ts = int(time.time())
     
-    Path(f'{BASE_DIRECTORY}/{story_id}').mkdir(parents=True, exist_ok=True)
-    with open(f'{BASE_DIRECTORY}/{story_id}/{story_id}_{write_ts}.csv', 'w') as f:
+    with open(f'{BASE_DIRECTORY}/{story_id}_{write_ts}.csv', 'w') as f:
         f.write(story_data)    
     
 def crawl():
+    """
+    Look thru the last 500 HackerNews stories and save a snapshot of stories and associated comments.
+    """
     Path(f'{BASE_DIRECTORY}').mkdir(parents=True, exist_ok=True)
     
     new_stories_list = call_hackernews_api('newstories.json')
@@ -107,40 +126,68 @@ def crawl():
         print(f'Saving {s}')
         save_story(s)
 
-def create_crawl_snapshot():
+def save_file_to_s3(file_path, key, verbose=False):
+    session = boto3.Session(
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
+    )
+
+    s3 = session.resource('s3')
+        
+    try:
+        if verbose:
+            print(f'Saving {file_path}')
+                
+        s3.meta.client.upload_file(file_path, os.environ['AWS_HACKERNEWS_BUCKET'], key)
+            
+    except ClientError as e:
+        print(e)
+        
+def save_directory_to_s3(directory, verbose=False):
+    session = boto3.Session(
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
+    )
+
+    s3 = session.resource('s3')
+
+    for f in os.listdir(directory):
+        file_path = f'{directory}/{f}'        
+        save_file_to_s3(file_path, f, verbose)
+        
+def create_crawl_snapshot(save_to_s3=False):
+    """
+    Compile all CSVs from base_directory and flatten them into one snapshot.
+    """
     Path(f'{SNAPSHOT_DIRECTORY}').mkdir(parents=True, exist_ok=True)
 
     write_ts = int(time.time())
-    snapshot_file = f'{SNAPSHOT_DIRECTORY}/hackernews_{write_ts}.csv'
+    key = f'hackernews_{write_ts}.csv'
+    file_path = f'{SNAPSHOT_DIRECTORY}/{key}'
 
     df_list = []
     columns = ['timestamp', 'id', 'parent_id', 'type', 'by', 'text']
     
-    for f1 in os.listdir(BASE_DIRECTORY):
-        for f2 in os.listdir(f'{BASE_DIRECTORY}/{f1}'):
-            df = pd.read_csv(f'{BASE_DIRECTORY}/{f1}/{f2}', names=columns, sep=SEP)
-            df['story_id'] = df.query('type == \'story\'')['id'].iloc[0]
+    for f in os.listdir(BASE_DIRECTORY):
+        if '.csv' in f:
+            (story_id, write_ts) = f.replace('.csv', '').split('_')
             
+            df = pd.read_csv(f'{BASE_DIRECTORY}/{f}', names=columns, sep=SEP)
+            df['story_id'] = story_id
+            df['write_ts'] = write_ts
             df_list.append(df)
 
-    merged_df = pd.concat(df_list)\
-                  .drop_duplicates()\
-                  .dropna(subset=['id'])
-    merged_df = merged_df[['timestamp', 'story_id', 'id', 'parent_id', 'type', 'by', 'text']]
-    merged_df.to_csv(snapshot_file, sep=SEP, index=False)
+    merged_df = pd.concat(df_list).dropna(subset=['id'])
+    merged_df = merged_df[['timestamp', 'story_id', 'id', 'parent_id', 'type', 'by', 'text', 'write_ts']]
+    merged_df.to_csv(file_path, sep=SEP, index=False)
 
-def write_csv_to_table(csv_name, table_name):
-    host = os.environ['PLANETSCALE_HOST']
-    username = os.environ['PLANETSCALE_USERNAME']
-    password = os.environ['PLANETSCALE_PASSWORD']
-    db = os.environ['PLANETSCALE_DATABASE']
+    if save_to_s3:
+        save_file_to_s3(file_path, key, verbose=True)
+    return snapshot_file
 
-    connection_string = f'mysql+mysqldb://{username}:{password}@{host}/{db}'
-    engine = create_engine(connection_string, echo=True)
-
-    pd.read_csv(csv_name, sep=SEP)\
-      .to_sql(table_name, con=engine, index=False, if_exists='replace')
-
-if __name__ == '__main__':        
+def crawl_to_s3():
     crawl()
-    create_crawl_snapshot()    
+    create_crawl_snapshot(save_to_s3=True)
+
+if __name__ == '__main__':
+    crawl_to_s3()
