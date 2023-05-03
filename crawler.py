@@ -5,7 +5,6 @@ import re
 import os
 import datetime
 import html
-
 from pathlib import Path
 from urllib.request import urlopen
 from urllib.error import HTTPError, URLError
@@ -14,9 +13,6 @@ import pandas as pd
 import numpy as np
 import boto3
 from botocore.exceptions import ClientError
-
-import MySQLdb
-from sqlalchemy import create_engine, types
 
 BASE_DIRECTORY = f'{os.getcwd()}/hackernews'
 SNAPSHOT_DIRECTORY = f'{os.getcwd()}/snapshots'
@@ -127,6 +123,9 @@ def crawl():
         save_story(s)
 
 def save_file_to_s3(file_path, key, verbose=False):
+    """
+    Save file to S3 bucket
+    """
     session = boto3.Session(
         aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
         aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
@@ -144,6 +143,9 @@ def save_file_to_s3(file_path, key, verbose=False):
         print(e)
         
 def save_directory_to_s3(directory, verbose=False):
+    """
+    Iterate thru a directory and save each file
+    """
     session = boto3.Session(
         aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
         aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
@@ -183,7 +185,8 @@ def create_crawl_snapshot(save_to_s3=False):
 
     if save_to_s3:
         save_file_to_s3(file_path, key, verbose=True)
-    return snapshot_file
+
+    return file_path
 
 def crawl_to_s3():
     crawl()
