@@ -13,10 +13,22 @@ import pandas as pd
 import numpy as np
 import boto3
 from botocore.exceptions import ClientError
+from sentence_transformers import SentenceTransformer, util
 
-BASE_DIRECTORY = f'{os.getcwd()}/hackernews'
-SNAPSHOT_DIRECTORY = f'{os.getcwd()}/snapshots'
+WORKSPACE_DICT = {
+    'STORIES':f'{os.getcwd()}/stories',
+    'SNAPSHOTS':f'{os.getcwd()}/snapshots',
+    'PLOTS': f'{os.getcwd()}/plots',
+    'EMBEDDINGS':f'{os.getcwd()}/embeddings'
+}
+
 SEP = '\t'
+
+model = SentenceTransformer('all-mpnet-base-v2')
+
+def create_workspace():
+    for d in WORKSPACE_DICT.values():
+        Path(d).mkdir(parents=True, exist_ok=True)
 
 def call_hackernews_api(endpoint):
     """
@@ -107,15 +119,13 @@ def save_story(story_id):
     story_data = traverse_comment(id_dict=call_hackernews_api(f'item/{story_id}.json'), parent_='')
     write_ts = int(time.time())
     
-    with open(f'{BASE_DIRECTORY}/{story_id}_{write_ts}.csv', 'w') as f:
+    with open(f'{WORKSPACE_DICT["STORIES"]}/{story_id}_{write_ts}.csv', 'w') as f:
         f.write(story_data)    
     
 def crawl():
     """
     Look thru the last 500 HackerNews stories and save a snapshot of stories and associated comments.
     """
-    Path(f'{BASE_DIRECTORY}').mkdir(parents=True, exist_ok=True)
-    
     new_stories_list = call_hackernews_api('newstories.json')
     
     for s in new_stories_list:
@@ -156,41 +166,46 @@ def save_directory_to_s3(directory, verbose=False):
     for f in os.listdir(directory):
         file_path = f'{directory}/{f}'        
         save_file_to_s3(file_path, f, verbose)
-        
+
+
 def create_crawl_snapshot(save_to_s3=False):
     """
     Compile all CSVs from base_directory and flatten them into one snapshot.
     """
-    Path(f'{SNAPSHOT_DIRECTORY}').mkdir(parents=True, exist_ok=True)
-
     write_ts = int(time.time())
-    key = f'hackernews_{write_ts}.csv'
-    file_path = f'{SNAPSHOT_DIRECTORY}/{key}'
+    raw_comments_key = f'hackernews_{write_ts}.csv'
+    encoded_comments_key = f'hackernews_{write_ts}.pkl'
+    
+    raw_comments_filepath = f'{WORKSPACE_DICT["SNAPSHOTS"]}/{raw_comments_key}'
+    encoded_comments_filepath = f'{WORKSPACE_DICT["EMBEDDINGS"]}/{encoded_comments_key}'
 
     df_list = []
     columns = ['timestamp', 'id', 'parent_id', 'type', 'by', 'text']
     
-    for f in os.listdir(BASE_DIRECTORY):
+    for f in os.listdir(WORKSPACE_DICT["STORIES"]):
         if '.csv' in f:
             (story_id, write_ts) = f.replace('.csv', '').split('_')
             
-            df = pd.read_csv(f'{BASE_DIRECTORY}/{f}', names=columns, sep=SEP)
+            df = pd.read_csv(f'{WORKSPACE_DICT["STORIES"]}/{f}', names=columns, sep=SEP)
             df['story_id'] = story_id
             df['write_ts'] = write_ts
             df_list.append(df)
 
     merged_df = pd.concat(df_list).dropna(subset=['id'])
-    merged_df = merged_df[['timestamp', 'story_id', 'id', 'parent_id', 'type', 'by', 'text', 'write_ts']]
-    merged_df.to_csv(file_path, sep=SEP, index=False)
+    merged_df = merged_df[['timestamp', 'story_id', 'id', 'parent_id', 'type', 'by', 'text', 'write_ts']].drop_duplicates()
+    merged_df.to_csv(raw_comments_filepath, sep=SEP, index=False)
+
+    merged_df['encoding'] = merged_df['text'].apply(lambda x: model.encode(x))
+    merged_df.to_pickle(encoded_comments_filepath)
 
     if save_to_s3:
-        save_file_to_s3(file_path, key, verbose=True)
-
-    return file_path
-
+        save_file_to_s3(raw_comments_filepath, f'snapshots/{raw_comments_key}', verbose=True)
+        save_file_to_s3(encoded_comments_filepath, f'embeddings/{encoded_comments_key}', verbose=True)
+    
 def crawl_to_s3():
+    create_workspace()
     crawl()
     create_crawl_snapshot(save_to_s3=True)
-
+    
 if __name__ == '__main__':
     crawl_to_s3()
