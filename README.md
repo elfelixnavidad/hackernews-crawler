@@ -10,10 +10,7 @@ Job Flow:
 First Run:
 1. git clone https://github.com/elfelixnavidad/hackernews-crawler.git
 2. cd hackernews-crawler
-3. pip install virtualenv
-4. virtualenv hn_crawler
-5. source hn_crawler/bin/activate
-6. pip install -r requirements.txt
+3. docker build --tag hackernews-docker .
 
-.env:
+env:
 List of env variables you need defined in order to run the project.
