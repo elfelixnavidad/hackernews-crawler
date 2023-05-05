@@ -7,10 +7,13 @@ Job Flow:
 4. Apply embedding to comment text via SentenceTransformer package.
 5. Upload snapshot & embeddings to S3.
 
-First Run:
+Docker build:
 1. git clone https://github.com/elfelixnavidad/hackernews-crawler.git
 2. cd hackernews-crawler
 3. docker build --tag hackernews-docker .
+
+Docker run:
+1. docker run --env-file env hackernews-docker
 
 env:
 List of env variables you need defined in order to run the project.
