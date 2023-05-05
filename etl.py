@@ -12,6 +12,8 @@ from pathlib import Path
 from urllib.request import urlopen
 from urllib.error import HTTPError, URLError
 
+import hdbscan
+import openai
 import pandas as pd
 import numpy as np
 import boto3
@@ -20,6 +22,7 @@ from sentence_transformers import SentenceTransformer, util
 
 SEP = '\t'
 model = SentenceTransformer('all-mpnet-base-v2')
+openai.api_key = os.environ['OPENAI_API_KEY']
 
 STORIES_DIR = 'stories'
 EMBEDDINGS_DIR = 'embeddings'
@@ -157,10 +160,11 @@ def crawl():
     Look thru the last 500 HackerNews stories and save a snapshot of stories and associated comments.
     """
     new_stories_list = call_hackernews_api('newstories.json')
-    
+    story_count = 1
     for s in new_stories_list:
-        print(f'Saving {s}')
+        print(f'[{story_count}/500]: Saving {s}')
         save_story(s)
+        story_count += 1
 
 def create_crawl_snapshot():
     """
@@ -189,9 +193,55 @@ def create_crawl_snapshot():
 
     return encoded_comments_key
     
+def get_latest_file(prefix):
+    sorted_list = np.sort(list_files_in_bucket(prefix))
+    key = sorted_list[-1]
+    
+    return (pickle.loads(download_bytes_from_s3(key)), key)
+
+def generate_cluster_label(corpus):
+    completion = openai.ChatCompletion.create(
+        model='gpt-3.5-turbo',
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that can read a large body of text and give me a topic category in under 4 words."},
+            {"role": "user", "content": corpus},
+        ]
+    )
+    return completion['choices'][0]['message']['content']
+
+def cluster_comments():
+    print(f'Creating HDBSCAN model')
+    (df, key) = get_latest_file(prefix='embeddings')
+
+    clusterer = hdbscan.HDBSCAN()
+    clusterer.fit(np.vstack(df['encoding'].to_numpy()))
+
+    print('Assigning cluster IDs')
+    df['cluster_id'] = clusterer.labels_    
+    df['cluster_label'] = ''
+
+    cluster_id_list = np.sort(df.query('cluster_id >= 0')['cluster_id'].unique())
+    cluster_dict = {}
+
+    print('Creating topic categories and assigning cluster labels')
+    for c in cluster_id_list:
+        filtered_df = df.query('cluster_id == @c')['text']
+        max_len = 5 if len(filtered_df) > 5 else len(filtered_df)        
+        corpus = ' '.join(filtered_df.iloc[0:max_len])
+        
+        cluster_dict[c] = generate_cluster_label(corpus)
+
+    df['cluster_label'] = df['cluster_id'].apply(lambda x: cluster_dict[x] if x >= 0 else 'n/a')
+    
+    print('Uploading to S3')
+    upload_bytes_to_s3(body=pickle.dumps(df), key=key.replace('embeddings', 'clusters'))
+    
 def crawl_to_s3():
     crawl()
+    print('Creating embeddings...')
     create_crawl_snapshot()
+    print('Creating cluster model...')
+    cluster_comments()
     
 if __name__ == '__main__':
     crawl_to_s3()
