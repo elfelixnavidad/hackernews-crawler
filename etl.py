@@ -200,10 +200,17 @@ def get_latest_file(prefix):
     return (pickle.loads(download_bytes_from_s3(key)), key)
 
 def generate_cluster_label(corpus):
+    role = """
+    You are topicGPT, you can read a large body of text and then create a topic category that describes the body of text. 
+    For example if you read comments about ways to fix broken engines, smog checks, and check engine lights you would reply with auto maintenance as the topic category.
+    You will limit yourself to 4 words or less per topic category. After you create your topic category double check you meet the word limit requirement before giving your final answer.
+    """
+    
     completion = openai.ChatCompletion.create(
+        # model='gpt-4',
         model='gpt-3.5-turbo',
         messages=[
-            {"role": "system", "content": "You are a helpful assistant that can read a large body of text and give me a topic category in under 4 words."},
+            {"role": "system", "content": role},
             {"role": "user", "content": corpus},
         ]
     )
@@ -237,9 +244,9 @@ def cluster_comments():
     upload_bytes_to_s3(body=pickle.dumps(df), key=key.replace('embeddings', 'clusters'))
     
 def crawl_to_s3():
-    crawl()
-    print('Creating embeddings...')
-    create_crawl_snapshot()
+    # crawl()
+    # print('Creating embeddings...')
+    # create_crawl_snapshot()
     print('Creating cluster model...')
     cluster_comments()
     
