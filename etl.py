@@ -244,9 +244,9 @@ def cluster_comments():
     upload_bytes_to_s3(body=pickle.dumps(df), key=key.replace('embeddings', 'clusters'))
     
 def crawl_to_s3():
-    # crawl()
-    # print('Creating embeddings...')
-    # create_crawl_snapshot()
+    crawl()
+    print('Creating embeddings...')
+    create_crawl_snapshot()
     print('Creating cluster model...')
     cluster_comments()
     
