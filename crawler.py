@@ -5,6 +5,9 @@ import re
 import os
 import datetime
 import html
+import pickle
+import io
+
 from pathlib import Path
 from urllib.request import urlopen
 from urllib.error import HTTPError, URLError
@@ -15,20 +18,11 @@ import boto3
 from botocore.exceptions import ClientError
 from sentence_transformers import SentenceTransformer, util
 
-WORKSPACE_DICT = {
-    'STORIES':f'{os.getcwd()}/stories',
-    'SNAPSHOTS':f'{os.getcwd()}/snapshots',
-    'PLOTS': f'{os.getcwd()}/plots',
-    'EMBEDDINGS':f'{os.getcwd()}/embeddings'
-}
-
 SEP = '\t'
-
 model = SentenceTransformer('all-mpnet-base-v2')
 
-def create_workspace():
-    for d in WORKSPACE_DICT.values():
-        Path(d).mkdir(parents=True, exist_ok=True)
+STORIES_DIR = 'stories'
+EMBEDDINGS_DIR = 'embeddings'
 
 def call_hackernews_api(endpoint):
     """
@@ -55,7 +49,6 @@ def call_hackernews_api(endpoint):
 def create_row(id_dict, parent_id):
     """
     Sample schema
-
     | post_timestamp |  post_id | parent_id | post_type | post_by     | post_text                                                                                                                                                                                             |
     |----------------+----------+-----------+-----------+-------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
     |     1681917047 | 35629127 |           | story     | davidbarker | StableLM: A new open-source language model{SEP}https://stability.ai/blog/stability-ai-launches-the-first-of-its-stablelm-suite-of-language-models{SEP}1074                                            |
@@ -112,15 +105,52 @@ def traverse_comment(id_dict, parent_):
 
     return data
 
+def upload_bytes_to_s3(body, key):
+    session = boto3.Session(
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
+    )
+
+    s3 = session.resource('s3')
+    object = s3.Object(os.environ['AWS_HACKERNEWS_BUCKET'], key)
+    object.put(Body=body)    
+
+def download_bytes_from_s3(key):
+    session = boto3.Session(
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
+    )
+
+    s3_client = session.client('s3')
+    s3_response_object = s3_client.get_object(Bucket=os.environ['AWS_HACKERNEWS_BUCKET'], Key=key)
+    return s3_response_object['Body'].read()
+
+def list_files_in_bucket(prefix):
+    session = boto3.Session(
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
+    )
+
+    client = session.client('s3')
+    paginator = client.get_paginator('list_objects')
+    page_iterator = paginator.paginate(Bucket=os.environ['AWS_HACKERNEWS_BUCKET'], Prefix=f'{prefix}/')    
+    page_list = [p['Contents'] for p in page_iterator]
+    content_list = []
+    
+    for p in page_list:
+        for c in p:
+            content_list.append(c['Key'])
+        
+    return content_list
+
+
 def save_story(story_id):
     """
     Save HackerNews story and all associated comments.
     """
     story_data = traverse_comment(id_dict=call_hackernews_api(f'item/{story_id}.json'), parent_='')
     write_ts = int(time.time())
-    
-    with open(f'{WORKSPACE_DICT["STORIES"]}/{story_id}_{write_ts}.csv', 'w') as f:
-        f.write(story_data)    
+    upload_bytes_to_s3(body=story_data, key=f'{STORIES_DIR}/{story_id}/{write_ts}.csv')
     
 def crawl():
     """
@@ -132,80 +162,36 @@ def crawl():
         print(f'Saving {s}')
         save_story(s)
 
-def save_file_to_s3(file_path, key, verbose=False):
-    """
-    Save file to S3 bucket
-    """
-    session = boto3.Session(
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
-    )
-
-    s3 = session.resource('s3')
-        
-    try:
-        if verbose:
-            print(f'Saving {file_path}')
-                
-        s3.meta.client.upload_file(file_path, os.environ['AWS_HACKERNEWS_BUCKET'], key)
-            
-    except ClientError as e:
-        print(e)
-        
-def save_directory_to_s3(directory, verbose=False):
-    """
-    Iterate thru a directory and save each file
-    """
-    session = boto3.Session(
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
-    )
-
-    s3 = session.resource('s3')
-
-    for f in os.listdir(directory):
-        file_path = f'{directory}/{f}'        
-        save_file_to_s3(file_path, f, verbose)
-
-
-def create_crawl_snapshot(save_to_s3=False):
+def create_crawl_snapshot():
     """
     Compile all CSVs from base_directory and flatten them into one snapshot.
     """
     write_ts = int(time.time())
-    raw_comments_key = f'hackernews_{write_ts}.csv'
-    encoded_comments_key = f'hackernews_{write_ts}.pkl'
+    encoded_comments_key = f'{EMBEDDINGS_DIR}/{write_ts}.pkl'
     
-    raw_comments_filepath = f'{WORKSPACE_DICT["SNAPSHOTS"]}/{raw_comments_key}'
-    encoded_comments_filepath = f'{WORKSPACE_DICT["EMBEDDINGS"]}/{encoded_comments_key}'
-
     df_list = []
     columns = ['timestamp', 'id', 'parent_id', 'type', 'by', 'text']
     
-    for f in os.listdir(WORKSPACE_DICT["STORIES"]):
+    for f in list_files_in_bucket(prefix=STORIES_DIR):
         if '.csv' in f:
-            (story_id, write_ts) = f.replace('.csv', '').split('_')
-            
-            df = pd.read_csv(f'{WORKSPACE_DICT["STORIES"]}/{f}', names=columns, sep=SEP)
+            (prefix, story_id, write_ts) = f.replace('.csv', '').split('/')
+
+            df = pd.read_csv(io.StringIO(download_bytes_from_s3(key=f).decode('utf-8')), names=columns, sep=SEP)
             df['story_id'] = story_id
             df['write_ts'] = write_ts
             df_list.append(df)
 
-    merged_df = pd.concat(df_list).dropna(subset=['id'])
-    merged_df = merged_df[['timestamp', 'story_id', 'id', 'parent_id', 'type', 'by', 'text', 'write_ts']].drop_duplicates()
-    merged_df.to_csv(raw_comments_filepath, sep=SEP, index=False)
-
+    merged_df = pd.concat(df_list).dropna(subset=['id']).drop_duplicates(subset=['id', 'text'])
+    merged_df = merged_df[['timestamp', 'story_id', 'id', 'parent_id', 'type', 'by', 'text', 'write_ts']]
     merged_df['encoding'] = merged_df['text'].apply(lambda x: model.encode(x))
-    merged_df.to_pickle(encoded_comments_filepath)
 
-    if save_to_s3:
-        # save_file_to_s3(raw_comments_filepath, f'snapshots/{raw_comments_key}', verbose=True)
-        save_file_to_s3(encoded_comments_filepath, f'embeddings/{encoded_comments_key}', verbose=True)
+    upload_bytes_to_s3(body=pickle.dumps(merged_df), key=encoded_comments_key)
+
+    return encoded_comments_key
     
 def crawl_to_s3():
-    create_workspace()
     crawl()
-    create_crawl_snapshot(save_to_s3=True)
+    create_crawl_snapshot()
     
 if __name__ == '__main__':
     crawl_to_s3()
