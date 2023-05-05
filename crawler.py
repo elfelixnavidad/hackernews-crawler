@@ -61,7 +61,7 @@ def create_row(id_dict, parent_id):
     post_by = ''
     post_text = ''    
 
-    if ('deleted' in id_dict.keys() and id_dict['deleted']) or ('dead' in id_dict.keys() and id_dict['dead']):
+    if (not id_dict) or ('deleted' in id_dict.keys() and id_dict['deleted']) or ('dead' in id_dict.keys() and id_dict['dead']):
         return f'{post_timestamp}{SEP}{post_id}{SEP}{parent_id}{SEP}{post_type}{SEP}{post_by}{SEP}{post_text}'
         
     if 'time' in id_dict.keys():
