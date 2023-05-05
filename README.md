@@ -1,4 +1,4 @@
-Pull recent HackerNews comments & stories and save them to an S3 bucket.
+Natural language processing on HackerNews comments & stories. Full blog plost here: https://felix-sanchez.com/portfolio/hackernews
 
 Job Flow (etl.py):
 1. Pull list of all stories from hn endpoint: https://hacker-news.firebaseio.com/v0/newstories.json?print=pretty
@@ -20,3 +20,4 @@ Docker run:
 
 env:
 List of env variables you need defined in order to run the project.
+
